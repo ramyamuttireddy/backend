@@ -504,6 +504,253 @@ app.post("/salary/payments", async (req, res) => {
   }
 });
 
+// =====================================================
+// UPDATE SALARY PAYMENT
+// =====================================================
+
+app.put("/salary/payments/:paymentId", async (req, res) => {
+  try {
+    const { paymentId } = req.params;
+
+    const {
+      amount,
+      payment_date,
+      salary_month,
+      notes,
+    } = req.body;
+
+    if (!paymentId) {
+      return res.status(400).json({
+        success: false,
+        message: "Payment ID is required",
+      });
+    }
+
+    if (!amount || Number(amount) <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid payment amount is required",
+      });
+    }
+
+    if (!payment_date) {
+      return res.status(400).json({
+        success: false,
+        message: "Payment date is required",
+      });
+    }
+
+    if (!salary_month) {
+      return res.status(400).json({
+        success: false,
+        message: "Salary month is required",
+      });
+    }
+
+    // -------------------------------------------------
+    // Get existing payment
+    // -------------------------------------------------
+
+    const { data: existingPayment, error: existingError } =
+      await supabase
+        .from("salary_payments")
+        .select("*")
+        .eq("id", paymentId)
+        .single();
+
+    if (existingError) {
+      console.error(existingError);
+
+      return res.status(404).json({
+        success: false,
+        message: "Payment not found",
+      });
+    }
+
+    // -------------------------------------------------
+    // Get employee salary
+    // -------------------------------------------------
+
+    const employeeId = existingPayment.employee_id;
+
+    const { data: salaryData, error: salaryError } =
+      await supabase
+        .from("salaries")
+        .select("monthly_salary")
+        .eq("employee_id", employeeId)
+        .single();
+
+    if (salaryError) {
+      console.error(salaryError);
+
+      return res.status(404).json({
+        success: false,
+        message: "Employee salary not found",
+      });
+    }
+
+    const monthlySalary = Number(
+      salaryData.monthly_salary || 0
+    );
+
+    // -------------------------------------------------
+    // Calculate total paid for month
+    //
+    // IMPORTANT:
+    // Exclude current payment because we are editing it
+    // -------------------------------------------------
+
+    const { data: monthPayments, error: paymentsError } =
+      await supabase
+        .from("salary_payments")
+        .select("id, amount")
+        .eq("employee_id", employeeId)
+        .eq("salary_month", salary_month)
+        .neq("id", paymentId);
+
+    if (paymentsError) {
+      console.error(paymentsError);
+
+      return res.status(500).json({
+        success: false,
+        message: "Failed to calculate salary balance",
+      });
+    }
+
+    const totalOtherPayments = (
+      monthPayments || []
+    ).reduce(
+      (total, payment) =>
+        total + Number(payment.amount || 0),
+      0
+    );
+
+    const newAmount = Number(amount);
+
+    const remainingBeforeThisPayment =
+      monthlySalary - totalOtherPayments;
+
+    if (newAmount > remainingBeforeThisPayment) {
+      return res.status(400).json({
+        success: false,
+        message: `Payment cannot be greater than remaining salary ($${Math.max(
+          remainingBeforeThisPayment,
+          0
+        ).toLocaleString()})`,
+      });
+    }
+
+    // -------------------------------------------------
+    // UPDATE PAYMENT
+    // -------------------------------------------------
+
+    const { data, error } = await supabase
+      .from("salary_payments")
+      .update({
+        amount: newAmount,
+        payment_date,
+        salary_month,
+        notes: notes || null,
+      })
+      .eq("id", paymentId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error(error);
+
+      return res.status(500).json({
+        success: false,
+        message: error.message,
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: "Payment updated successfully",
+      payment: data,
+    });
+  } catch (error) {
+    console.error("UPDATE PAYMENT ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to update payment",
+    });
+  }
+});
+
+// =====================================================
+// DELETE SALARY PAYMENT
+// =====================================================
+
+app.delete(
+  "/salary/payments/:paymentId",
+  async (req, res) => {
+    try {
+      const { paymentId } = req.params;
+
+      if (!paymentId) {
+        return res.status(400).json({
+          success: false,
+          message: "Payment ID is required",
+        });
+      }
+
+      // -------------------------------------------------
+      // Check payment exists
+      // -------------------------------------------------
+
+      const { data: payment, error: findError } =
+        await supabase
+          .from("salary_payments")
+          .select("*")
+          .eq("id", paymentId)
+          .single();
+
+      if (findError) {
+        console.error(findError);
+
+        return res.status(404).json({
+          success: false,
+          message: "Payment not found",
+        });
+      }
+
+      // -------------------------------------------------
+      // DELETE
+      // -------------------------------------------------
+
+      const { error } = await supabase
+        .from("salary_payments")
+        .delete()
+        .eq("id", paymentId);
+
+      if (error) {
+        console.error(error);
+
+        return res.status(500).json({
+          success: false,
+          message: error.message,
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: "Payment deleted successfully",
+        deletedPayment: payment,
+      });
+    } catch (error) {
+      console.error("DELETE PAYMENT ERROR:", error);
+
+      return res.status(500).json({
+        success: false,
+        message:
+          error.message || "Failed to delete payment",
+      });
+    }
+  }
+);
 // ======================================================
 // SERVER
 // ======================================================
