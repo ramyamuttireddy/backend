@@ -2,6 +2,7 @@ require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
+
 const {
   ClientSecretCredential,
 } = require("@azure/identity");
@@ -22,16 +23,18 @@ app.use(express.json());
 // AZURE
 // ======================================================
 
-const credential = new ClientSecretCredential(
-  process.env.TENANT_ID,
-  process.env.CLIENT_ID,
-  process.env.CLIENT_SECRET
-);
+const credential =
+  new ClientSecretCredential(
+    process.env.TENANT_ID,
+    process.env.CLIENT_ID,
+    process.env.CLIENT_SECRET
+  );
 
 async function getAccessToken() {
-  const tokenResponse = await credential.getToken(
-    "https://graph.microsoft.com/.default"
-  );
+  const tokenResponse =
+    await credential.getToken(
+      "https://graph.microsoft.com/.default"
+    );
 
   return tokenResponse.token;
 }
@@ -43,7 +46,8 @@ async function getAccessToken() {
 app.get("/", (req, res) => {
   res.json({
     success: true,
-    message: "Bharat Bhavan Salary API is running",
+    message:
+      "Bharat Bhavan Salary API is running",
   });
 });
 
@@ -51,230 +55,305 @@ app.get("/", (req, res) => {
 // EMPLOYEES FROM EXCEL
 // ======================================================
 
-app.get("/api/employees", async (req, res) => {
-  try {
-    const userEmail = process.env.USER_EMAIL;
-    const fileId = process.env.FILE_ID;
-    const sheetName = process.env.EXCEL_SHEET_NAME;
+app.get(
+  "/api/employees",
+  async (req, res) => {
+    try {
+      const userEmail =
+        process.env.USER_EMAIL;
 
-    if (!userEmail) {
-      return res.status(500).json({
-        success: false,
-        message: "USER_EMAIL missing in .env",
-      });
-    }
+      const fileId =
+        process.env.FILE_ID;
 
-    if (!fileId) {
-      return res.status(500).json({
-        success: false,
-        message: "FILE_ID missing in .env",
-      });
-    }
+      const sheetName =
+        process.env.EXCEL_SHEET_NAME;
 
-    if (!sheetName) {
-      return res.status(500).json({
-        success: false,
-        message: "EXCEL_SHEET_NAME missing in .env",
-      });
-    }
-
-    const accessToken = await getAccessToken();
-
-    const graphUrl =
-      `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(
-        userEmail
-      )}/drive/items/${encodeURIComponent(
-        fileId
-      )}/workbook/worksheets/${encodeURIComponent(
-        sheetName
-      )}/usedRange`;
-
-    const response = await fetch(graphUrl, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: "application/json",
-      },
-    });
-
-    const result = await response.json();
-
-    if (!response.ok) {
-      console.error("Graph Error:", result);
-
-      return res.status(response.status).json({
-        success: false,
-        message:
-          result?.error?.message ||
-          "Failed to read Excel",
-      });
-    }
-
-    const values = result.values || [];
-
-    if (values.length === 0) {
-      return res.json({
-        success: true,
-        source: "Microsoft Excel",
-        count: 0,
-        data: [],
-      });
-    }
-
-    const headers = values[0].map((header) =>
-      String(header || "").trim()
-    );
-
-    const employees = values
-      .slice(1)
-      .map((row, index) => {
-        const employee = {};
-
-        headers.forEach((header, columnIndex) => {
-          employee[header] =
-            row[columnIndex] ?? "";
+      if (!userEmail) {
+        return res.status(500).json({
+          success: false,
+          message:
+            "USER_EMAIL missing in .env",
         });
+      }
 
-        employee.id = index + 1;
+      if (!fileId) {
+        return res.status(500).json({
+          success: false,
+          message:
+            "FILE_ID missing in .env",
+        });
+      }
 
-        employee.name =
-          employee["Full Name"] ||
-          employee["Name"] ||
-          employee["Employee Name"] ||
-          "";
+      if (!sheetName) {
+        return res.status(500).json({
+          success: false,
+          message:
+            "EXCEL_SHEET_NAME missing in .env",
+        });
+      }
 
-        employee.branch =
-          employee["Location"] ||
-          employee["Branch"] ||
-          "";
+      const accessToken =
+        await getAccessToken();
 
-        employee.email =
-          employee["E-mail ID"] ||
-          employee["Email"] ||
-          employee["Email ID"] ||
-          "";
+      const graphUrl =
+        `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(
+          userEmail
+        )}/drive/items/${encodeURIComponent(
+          fileId
+        )}/workbook/worksheets/${encodeURIComponent(
+          sheetName
+        )}/usedRange`;
 
-        employee.phone =
-          employee["Phone Number"] ||
-          employee["Phone"] ||
-          "";
-
-        const salary =
-          employee["Monthly Salary in Dollars"] ||
-          employee["Monthly Salary"] ||
-          0;
-
-        employee.monthly_salary =
-          Number(
-            String(salary)
-              .replace("$", "")
-              .replace(",", "")
-              .trim()
-          ) || 0;
-
-        return employee;
-      })
-      .filter(
-        (employee) =>
-          String(employee.name).trim() !== ""
+      const response = await fetch(
+        graphUrl,
+        {
+          method: "GET",
+          headers: {
+            Authorization:
+              `Bearer ${accessToken}`,
+            Accept:
+              "application/json",
+          },
+        }
       );
 
-    return res.json({
-      success: true,
-      source: "Microsoft Excel",
-      sheet: sheetName,
-      count: employees.length,
-      data: employees,
-    });
-  } catch (error) {
-    console.error("Excel API Error:", error);
+      const result =
+        await response.json();
 
-    return res.status(500).json({
-      success: false,
-      message: error.message,
-    });
-  }
-});
+      if (!response.ok) {
+        console.error(
+          "Graph Error:",
+          result
+        );
 
-// ======================================================
-// GET ALL MONTHLY SALARIES
-// ======================================================
+        return res
+          .status(response.status)
+          .json({
+            success: false,
+            message:
+              result?.error?.message ||
+              "Failed to read Excel",
+          });
+      }
 
-app.get("/salary/monthly", async (req, res) => {
-  try {
-    const month = req.query.month;
+      const values =
+        result.values || [];
 
-    if (!month) {
-      return res.status(400).json({
-        success: false,
-        message: "Month is required. Example: 2026-08",
+      if (values.length === 0) {
+        return res.json({
+          success: true,
+          source:
+            "Microsoft Excel",
+          count: 0,
+          data: [],
+        });
+      }
+
+      const headers =
+        values[0].map((header) =>
+          String(header || "").trim()
+        );
+
+      const employees =
+        values
+          .slice(1)
+          .map((row, index) => {
+            const employee = {};
+
+            headers.forEach(
+              (
+                header,
+                columnIndex
+              ) => {
+                employee[header] =
+                  row[columnIndex] ??
+                  "";
+              }
+            );
+
+            employee.id =
+              index + 1;
+
+            employee.name =
+              employee["Full Name"] ||
+              employee["Name"] ||
+              employee[
+                "Employee Name"
+              ] ||
+              "";
+
+            employee.branch =
+              employee["Location"] ||
+              employee["Branch"] ||
+              "";
+
+            employee.email =
+              employee["E-mail ID"] ||
+              employee["Email"] ||
+              employee[
+                "Email ID"
+              ] ||
+              "";
+
+            employee.phone =
+              employee[
+                "Phone Number"
+              ] ||
+              employee["Phone"] ||
+              "";
+
+            const salary =
+              employee[
+                "Monthly Salary in Dollars"
+              ] ||
+              employee[
+                "Monthly Salary"
+              ] ||
+              0;
+
+            employee.monthly_salary =
+              Number(
+                String(salary)
+                  .replace("$", "")
+                  .replace(",", "")
+                  .trim()
+              ) || 0;
+
+            return employee;
+          })
+          .filter(
+            (employee) =>
+              String(
+                employee.name
+              ).trim() !== ""
+          );
+
+      return res.json({
+        success: true,
+        source:
+          "Microsoft Excel",
+        sheet: sheetName,
+        count:
+          employees.length,
+        data: employees,
       });
-    }
-
-    const salaryMonthDate = `${month}-01`;
-
-    const { data, error } = await supabase
-      .from("monthly_salaries")
-      .select("*")
-      .eq("salary_month", salaryMonthDate)
-      .order("employee_id");
-
-    if (error) {
+    } catch (error) {
       console.error(
-        "Get all salaries error:",
+        "Excel API Error:",
         error
       );
 
       return res.status(500).json({
         success: false,
-        message: error.message,
+        message:
+          error.message,
       });
     }
-
-    return res.json({
-      success: true,
-      salary_month: month,
-      salaries: data || [],
-    });
-  } catch (error) {
-    console.error(error);
-
-    return res.status(500).json({
-      success: false,
-      message: error.message,
-    });
   }
-});
+);
 
 // ======================================================
-// GET MONTHLY SALARY
+// GET ALL MONTHLY SALARIES
+// ======================================================
+
+app.get(
+  "/salary/monthly",
+  async (req, res) => {
+    try {
+      const month =
+        req.query.month;
+
+      if (!month) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Month is required. Example: 2026-08",
+        });
+      }
+
+      const salaryMonthDate =
+        `${month}-01`;
+
+      const {
+        data,
+        error,
+      } = await supabase
+        .from(
+          "monthly_salaries"
+        )
+        .select("*")
+        .eq(
+          "salary_month",
+          salaryMonthDate
+        )
+        .order(
+          "employee_id"
+        );
+
+      if (error) {
+        console.error(
+          "Get all salaries error:",
+          error
+        );
+
+        return res
+          .status(500)
+          .json({
+            success: false,
+            message:
+              error.message,
+          });
+      }
+
+      return res.json({
+        success: true,
+        salary_month: month,
+        salaries: data || [],
+      });
+    } catch (error) {
+      console.error(error);
+
+      return res.status(500).json({
+        success: false,
+        message:
+          error.message,
+      });
+    }
+  }
+);
+
+// ======================================================
+// GET MONTHLY SALARY + PAYMENTS
 // ======================================================
 
 app.get(
   "/salary/monthly/:employeeId/:month",
   async (req, res) => {
     try {
-      const employeeId = Number(
-        req.params.employeeId
-      );
+      const employeeId =
+        Number(req.params.employeeId);
 
-      const month = req.params.month;
+      const month =
+        req.params.month;
 
       if (!employeeId) {
         return res.status(400).json({
           success: false,
-          message: "Employee ID is required",
+          message:
+            "Employee ID is required",
         });
       }
 
       if (!month) {
         return res.status(400).json({
           success: false,
-          message: "Salary month is required",
+          message:
+            "Salary month is required",
         });
       }
 
-      const salaryMonthDate = `${month}-01`;
+      const salaryMonthDate =
+        `${month}-01`;
 
       // -----------------------------
       // SALARY
@@ -284,16 +363,25 @@ app.get(
         data: salaryData,
         error: salaryError,
       } = await supabase
-        .from("monthly_salaries")
+        .from(
+          "monthly_salaries"
+        )
         .select("*")
-        .eq("employee_id", employeeId)
-        .eq("salary_month", salaryMonthDate)
+        .eq(
+          "employee_id",
+          employeeId
+        )
+        .eq(
+          "salary_month",
+          salaryMonthDate
+        )
         .maybeSingle();
 
       if (salaryError) {
         return res.status(500).json({
           success: false,
-          message: salaryError.message,
+          message:
+            salaryError.message,
         });
       }
 
@@ -305,26 +393,42 @@ app.get(
         data: payments,
         error: paymentError,
       } = await supabase
-        .from("salary_payments")
+        .from(
+          "salary_payments"
+        )
         .select("*")
-        .eq("employee_id", employeeId)
-        .eq("salary_month", month)
-        .order("payment_date", {
-          ascending: false,
-        });
+        .eq(
+          "employee_id",
+          employeeId
+        )
+        .eq(
+          "salary_month",
+          month
+        )
+        .order(
+          "payment_date",
+          {
+            ascending: false,
+          }
+        );
 
       if (paymentError) {
         return res.status(500).json({
           success: false,
-          message: paymentError.message,
+          message:
+            paymentError.message,
         });
       }
 
-      const totalPaid = (payments || []).reduce(
-        (total, payment) =>
-          total + Number(payment.amount || 0),
-        0
-      );
+      const totalPaid =
+        (payments || []).reduce(
+          (total, payment) =>
+            total +
+            Number(
+              payment.amount || 0
+            ),
+          0
+        );
 
       // -----------------------------
       // NO SALARY
@@ -334,10 +438,12 @@ app.get(
         return res.json({
           success: true,
           salary: null,
-          payments: payments || [],
-          total_paid: Number(
-            totalPaid.toFixed(2)
-          ),
+          payments:
+            payments || [],
+          total_paid:
+            Number(
+              totalPaid.toFixed(2)
+            ),
           earned_salary: 0,
           remaining: 0,
         });
@@ -347,25 +453,35 @@ app.get(
       // CALCULATE EARNED
       // -----------------------------
 
-      const monthlySalary = Number(
-        salaryData.monthly_salary || 0
-      );
+      const monthlySalary =
+        Number(
+          salaryData.monthly_salary ||
+            0
+        );
 
-      const workingDays = Number(
-        salaryData.working_days || 0
-      );
+      const workingDays =
+        Number(
+          salaryData.working_days ||
+            0
+        );
 
-      const hoursPerDay = Number(
-        salaryData.hours_per_day || 0
-      );
+      const hoursPerDay =
+        Number(
+          salaryData.hours_per_day ||
+            0
+        );
 
-      const workedHours = Number(
-        salaryData.worked_hours || 0
-      );
+      const workedHours =
+        Number(
+          salaryData.worked_hours ||
+            0
+        );
 
-      let earnedSalary = Number(
-        salaryData.earned_salary || 0
-      );
+      let earnedSalary =
+        Number(
+          salaryData.earned_salary ||
+            0
+        );
 
       if (
         monthlySalary > 0 &&
@@ -373,44 +489,54 @@ app.get(
         hoursPerDay > 0
       ) {
         const totalMonthlyHours =
-          workingDays * hoursPerDay;
+          workingDays *
+          hoursPerDay;
 
         const hourlyRate =
           monthlySalary /
           totalMonthlyHours;
 
         earnedSalary =
-          hourlyRate * workedHours;
+          hourlyRate *
+          workedHours;
       }
 
-      earnedSalary = Number(
-        earnedSalary.toFixed(2)
-      );
+      earnedSalary =
+        Number(
+          earnedSalary.toFixed(2)
+        );
 
-      const remaining = Math.max(
-        earnedSalary - totalPaid,
-        0
-      );
+      const remaining =
+        Math.max(
+          earnedSalary -
+            totalPaid,
+          0
+        );
 
       return res.json({
         success: true,
 
         salary: {
           ...salaryData,
-          earned_salary: earnedSalary,
+          earned_salary:
+            earnedSalary,
         },
 
-        payments: payments || [],
+        payments:
+          payments || [],
 
-        total_paid: Number(
-          totalPaid.toFixed(2)
-        ),
+        total_paid:
+          Number(
+            totalPaid.toFixed(2)
+          ),
 
-        earned_salary: earnedSalary,
+        earned_salary:
+          earnedSalary,
 
-        remaining: Number(
-          remaining.toFixed(2)
-        ),
+        remaining:
+          Number(
+            remaining.toFixed(2)
+          ),
       });
     } catch (error) {
       console.error(
@@ -420,7 +546,8 @@ app.get(
 
       return res.status(500).json({
         success: false,
-        message: error.message,
+        message:
+          error.message,
       });
     }
   }
@@ -447,14 +574,16 @@ app.post(
       if (!employee_id) {
         return res.status(400).json({
           success: false,
-          message: "Employee ID is required",
+          message:
+            "Employee ID is required",
         });
       }
 
       if (!salary_month) {
         return res.status(400).json({
           success: false,
-          message: "Salary month is required",
+          message:
+            "Salary month is required",
         });
       }
 
@@ -491,25 +620,20 @@ app.post(
         });
       }
 
-      const salary = Number(
-        monthly_salary
-      );
+      const salary =
+        Number(monthly_salary);
 
-      const days = Number(
-        working_days
-      );
+      const days =
+        Number(working_days);
 
-      const hours = Number(
-        hours_per_day
-      );
+      const hours =
+        Number(hours_per_day);
 
-      const daysWorked = Number(
-        worked_days || 0
-      );
+      const daysWorked =
+        Number(worked_days || 0);
 
-      let finalWorkedHours = Number(
-        worked_hours || 0
-      );
+      let finalWorkedHours =
+        Number(worked_hours || 0);
 
       if (
         finalWorkedHours <= 0 &&
@@ -527,31 +651,40 @@ app.post(
         hours > 0
       ) {
         earnedSalary =
-          (salary / (days * hours)) *
+          (salary /
+            (days * hours)) *
           finalWorkedHours;
       }
 
-      earnedSalary = Number(
-        earnedSalary.toFixed(2)
-      );
+      earnedSalary =
+        Number(
+          earnedSalary.toFixed(2)
+        );
 
       const salaryData = {
-        employee_id: Number(employee_id),
+        employee_id:
+          Number(employee_id),
 
         salary_month:
           `${salary_month}-01`,
 
-        monthly_salary: salary,
+        monthly_salary:
+          salary,
 
-        working_days: days,
+        working_days:
+          days,
 
-        hours_per_day: hours,
+        hours_per_day:
+          hours,
 
-        worked_days: daysWorked,
+        worked_days:
+          daysWorked,
 
-        worked_hours: finalWorkedHours,
+        worked_hours:
+          finalWorkedHours,
 
-        earned_salary: earnedSalary,
+        earned_salary:
+          earnedSalary,
 
         updated_at:
           new Date().toISOString(),
@@ -561,11 +694,16 @@ app.post(
         data,
         error,
       } = await supabase
-        .from("monthly_salaries")
-        .upsert(salaryData, {
-          onConflict:
-            "employee_id,salary_month",
-        })
+        .from(
+          "monthly_salaries"
+        )
+        .upsert(
+          salaryData,
+          {
+            onConflict:
+              "employee_id,salary_month",
+          }
+        )
         .select()
         .single();
 
@@ -577,9 +715,12 @@ app.post(
 
         return res.status(500).json({
           success: false,
-          message: error.message,
-          details: error.details,
-          code: error.code,
+          message:
+            error.message,
+          details:
+            error.details,
+          code:
+            error.code,
         });
       }
 
@@ -597,7 +738,8 @@ app.post(
 
       return res.status(500).json({
         success: false,
-        message: error.message,
+        message:
+          error.message,
       });
     }
   }
@@ -611,9 +753,8 @@ app.put(
   "/salary/monthly/:employeeId/:month",
   async (req, res) => {
     try {
-      const employeeId = Number(
-        req.params.employeeId
-      );
+      const employeeId =
+        Number(req.params.employeeId);
 
       const month =
         req.params.month;
@@ -642,24 +783,30 @@ app.put(
         });
       }
 
-      const salary = Number(
-        monthly_salary || 0
-      );
+      const salary =
+        Number(
+          monthly_salary || 0
+        );
 
-      const days = Number(
-        working_days || 0
-      );
+      const days =
+        Number(
+          working_days || 0
+        );
 
-      const hours = Number(
-        hours_per_day || 0
-      );
+      const hours =
+        Number(
+          hours_per_day || 0
+        );
 
-      const daysWorked = Number(
-        worked_days || 0
-      );
+      const daysWorked =
+        Number(
+          worked_days || 0
+        );
 
       let finalWorkedHours =
-        Number(worked_hours || 0);
+        Number(
+          worked_hours || 0
+        );
 
       if (
         finalWorkedHours <= 0 &&
@@ -677,27 +824,35 @@ app.put(
         hours > 0
       ) {
         earnedSalary =
-          (salary / (days * hours)) *
+          (salary /
+            (days * hours)) *
           finalWorkedHours;
       }
 
-      earnedSalary = Number(
-        earnedSalary.toFixed(2)
-      );
+      earnedSalary =
+        Number(
+          earnedSalary.toFixed(2)
+        );
 
       const {
         data,
         error,
       } = await supabase
-        .from("monthly_salaries")
+        .from(
+          "monthly_salaries"
+        )
         .update({
-          monthly_salary: salary,
+          monthly_salary:
+            salary,
 
-          working_days: days,
+          working_days:
+            days,
 
-          hours_per_day: hours,
+          hours_per_day:
+            hours,
 
-          worked_days: daysWorked,
+          worked_days:
+            daysWorked,
 
           worked_hours:
             finalWorkedHours,
@@ -727,7 +882,8 @@ app.put(
 
         return res.status(500).json({
           success: false,
-          message: error.message,
+          message:
+            error.message,
         });
       }
 
@@ -745,7 +901,8 @@ app.put(
 
       return res.status(500).json({
         success: false,
-        message: error.message,
+        message:
+          error.message,
       });
     }
   }
@@ -796,17 +953,113 @@ app.post(
 
       const finalSalaryMonth =
         salary_month ||
-        String(payment_date).slice(
-          0,
-          7
+        String(
+          payment_date
+        ).slice(0, 7);
+
+      // Check monthly salary
+      const {
+        data: salaryData,
+        error: salaryError,
+      } = await supabase
+        .from(
+          "monthly_salaries"
+        )
+        .select(
+          "earned_salary, monthly_salary"
+        )
+        .eq(
+          "employee_id",
+          Number(employee_id)
+        )
+        .eq(
+          "salary_month",
+          `${finalSalaryMonth}-01`
+        )
+        .maybeSingle();
+
+      if (salaryError) {
+        return res.status(500).json({
+          success: false,
+          message:
+            salaryError.message,
+        });
+      }
+
+      const salaryLimit =
+        Number(
+          salaryData?.earned_salary ||
+            salaryData?.monthly_salary ||
+            0
         );
+
+      // Existing payments
+      const {
+        data: existingPayments,
+        error:
+          existingPaymentsError,
+      } = await supabase
+        .from(
+          "salary_payments"
+        )
+        .select("amount")
+        .eq(
+          "employee_id",
+          Number(employee_id)
+        )
+        .eq(
+          "salary_month",
+          finalSalaryMonth
+        );
+
+      if (
+        existingPaymentsError
+      ) {
+        return res.status(500).json({
+          success: false,
+          message:
+            existingPaymentsError.message,
+        });
+      }
+
+      const alreadyPaid =
+        (
+          existingPayments || []
+        ).reduce(
+          (total, payment) =>
+            total +
+            Number(
+              payment.amount || 0
+            ),
+          0
+        );
+
+      const newAmount =
+        Number(amount);
+
+      if (
+        salaryLimit > 0 &&
+        alreadyPaid +
+          newAmount >
+          salaryLimit
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            `Payment exceeds remaining salary. Remaining: $${Math.max(
+              salaryLimit -
+                alreadyPaid,
+              0
+            ).toFixed(2)}`,
+        });
+      }
 
       const paymentData = {
         employee_id:
           Number(employee_id),
 
         amount:
-          Number(amount),
+          newAmount,
 
         payment_date,
 
@@ -821,7 +1074,9 @@ app.post(
         data,
         error,
       } = await supabase
-        .from("salary_payments")
+        .from(
+          "salary_payments"
+        )
         .insert(paymentData)
         .select()
         .single();
@@ -834,7 +1089,8 @@ app.post(
 
         return res.status(500).json({
           success: false,
-          message: error.message,
+          message:
+            error.message,
         });
       }
 
@@ -852,7 +1108,8 @@ app.post(
 
       return res.status(500).json({
         success: false,
-        message: error.message,
+        message:
+          error.message,
       });
     }
   }
@@ -866,9 +1123,8 @@ app.get(
   "/salary/payments/:employeeId",
   async (req, res) => {
     try {
-      const employeeId = Number(
-        req.params.employeeId
-      );
+      const employeeId =
+        Number(req.params.employeeId);
 
       if (!employeeId) {
         return res.status(400).json({
@@ -882,7 +1138,9 @@ app.get(
         data,
         error,
       } = await supabase
-        .from("salary_payments")
+        .from(
+          "salary_payments"
+        )
         .select("*")
         .eq(
           "employee_id",
@@ -898,7 +1156,8 @@ app.get(
       if (error) {
         return res.status(500).json({
           success: false,
-          message: error.message,
+          message:
+            error.message,
         });
       }
 
@@ -912,7 +1171,8 @@ app.get(
     } catch (error) {
       return res.status(500).json({
         success: false,
-        message: error.message,
+        message:
+          error.message,
       });
     }
   }
@@ -963,12 +1223,15 @@ app.put(
         });
       }
 
+      // Find payment
       const {
         data: existingPayment,
         error:
           existingError,
       } = await supabase
-        .from("salary_payments")
+        .from(
+          "salary_payments"
+        )
         .select("*")
         .eq("id", paymentId)
         .single();
@@ -984,11 +1247,14 @@ app.put(
       const employeeId =
         existingPayment.employee_id;
 
+      // Salary
       const {
         data: salaryData,
         error: salaryError,
       } = await supabase
-        .from("monthly_salaries")
+        .from(
+          "monthly_salaries"
+        )
         .select(
           "monthly_salary, earned_salary"
         )
@@ -1017,13 +1283,18 @@ app.put(
             0
         );
 
+      // Other payments
       const {
         data: otherPayments,
         error:
           paymentsError,
       } = await supabase
-        .from("salary_payments")
-        .select("id, amount")
+        .from(
+          "salary_payments"
+        )
+        .select(
+          "id, amount"
+        )
         .eq(
           "employee_id",
           employeeId
@@ -1046,7 +1317,9 @@ app.put(
       }
 
       const totalOther =
-        (otherPayments || []).reduce(
+        (
+          otherPayments || []
+        ).reduce(
           (total, payment) =>
             total +
             Number(
@@ -1063,8 +1336,12 @@ app.put(
         totalOther;
 
       if (
+        salaryLimit > 0 &&
         newAmount >
-        Math.max(remaining, 0)
+          Math.max(
+            remaining,
+            0
+          )
       ) {
         return res.status(400).json({
           success: false,
@@ -1077,11 +1354,17 @@ app.put(
         data,
         error,
       } = await supabase
-        .from("salary_payments")
+        .from(
+          "salary_payments"
+        )
         .update({
-          amount: newAmount,
+          amount:
+            newAmount,
+
           payment_date,
+
           salary_month,
+
           notes:
             notes || null,
         })
@@ -1095,7 +1378,8 @@ app.put(
       if (error) {
         return res.status(500).json({
           success: false,
-          message: error.message,
+          message:
+            error.message,
         });
       }
 
@@ -1113,7 +1397,8 @@ app.put(
 
       return res.status(500).json({
         success: false,
-        message: error.message,
+        message:
+          error.message,
       });
     }
   }
@@ -1134,9 +1419,14 @@ app.delete(
         data: payment,
         error: findError,
       } = await supabase
-        .from("salary_payments")
+        .from(
+          "salary_payments"
+        )
         .select("*")
-        .eq("id", paymentId)
+        .eq(
+          "id",
+          paymentId
+        )
         .single();
 
       if (findError) {
@@ -1147,16 +1437,23 @@ app.delete(
         });
       }
 
-      const { error } =
-        await supabase
-          .from("salary_payments")
-          .delete()
-          .eq("id", paymentId);
+      const {
+        error,
+      } = await supabase
+        .from(
+          "salary_payments"
+        )
+        .delete()
+        .eq(
+          "id",
+          paymentId
+        );
 
       if (error) {
         return res.status(500).json({
           success: false,
-          message: error.message,
+          message:
+            error.message,
         });
       }
 
@@ -1175,7 +1472,8 @@ app.delete(
 
       return res.status(500).json({
         success: false,
-        message: error.message,
+        message:
+          error.message,
       });
     }
   }
@@ -1188,8 +1486,11 @@ app.delete(
 const PORT =
   process.env.PORT || 5000;
 
-app.listen(PORT, () => {
-  console.log(
-    `Server running on port ${PORT}`
-  );
-});
+app.listen(
+  PORT,
+  () => {
+    console.log(
+      `Server running on port ${PORT}`
+    );
+  }
+);
