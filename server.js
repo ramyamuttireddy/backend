@@ -11,32 +11,54 @@ const supabase = require("./config/supabase");
 
 const app = express();
 
-// ======================================================
-// MIDDLEWARE
-// ======================================================
+/* =========================================================
+   MIDDLEWARE
+========================================================= */
 
 app.use(
   cors({
     origin: "*",
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
 
 app.use(express.json());
 
-// ======================================================
-// AZURE
-// ======================================================
+/* =========================================================
+   ENVIRONMENT CHECK
+========================================================= */
 
-const credential =
-  new ClientSecretCredential(
-    process.env.TENANT_ID,
-    process.env.CLIENT_ID,
-    process.env.CLIENT_SECRET
-  );
+const requiredEnv = [
+  "SUPABASE_URL",
+  "SUPABASE_SERVICE_ROLE_KEY",
+  "TENANT_ID",
+  "CLIENT_ID",
+  "CLIENT_SECRET",
+  "USER_EMAIL",
+  "FILE_ID",
+  "EXCEL_SHEET_NAME",
+];
 
-// ======================================================
-// TOKEN CACHE
-// ======================================================
+for (const key of requiredEnv) {
+  if (!process.env[key]) {
+    console.warn(`WARNING: ${key} is missing`);
+  }
+}
+
+/* =========================================================
+   AZURE
+========================================================= */
+
+const credential = new ClientSecretCredential(
+  process.env.TENANT_ID,
+  process.env.CLIENT_ID,
+  process.env.CLIENT_SECRET
+);
+
+/* =========================================================
+   TOKEN CACHE
+========================================================= */
 
 let cachedAccessToken = null;
 let tokenExpiresAt = 0;
@@ -44,7 +66,6 @@ let tokenExpiresAt = 0;
 async function getAccessToken() {
   const now = Date.now();
 
-  // Reuse token if still valid
   if (
     cachedAccessToken &&
     now < tokenExpiresAt
@@ -52,19 +73,22 @@ async function getAccessToken() {
     return cachedAccessToken;
   }
 
-  console.log(
-    "Getting new Microsoft Graph token..."
-  );
+  console.log("Getting new Microsoft Graph token...");
 
   const tokenResponse =
     await credential.getToken(
       "https://graph.microsoft.com/.default"
     );
 
+  if (!tokenResponse || !tokenResponse.token) {
+    throw new Error(
+      "Unable to get Microsoft Graph access token"
+    );
+  }
+
   cachedAccessToken =
     tokenResponse.token;
 
-  // Keep 5 minutes safety buffer
   tokenExpiresAt =
     tokenResponse.expiresOnTimestamp -
     5 * 60 * 1000;
@@ -72,9 +96,9 @@ async function getAccessToken() {
   return cachedAccessToken;
 }
 
-// ======================================================
-// EMPLOYEE CACHE
-// ======================================================
+/* =========================================================
+   EMPLOYEE CACHE
+========================================================= */
 
 let employeesCache = null;
 let employeesCacheTime = 0;
@@ -82,14 +106,77 @@ let employeesCacheTime = 0;
 const EMPLOYEE_CACHE_TIME =
   5 * 60 * 1000;
 
-// ======================================================
-// GET EMPLOYEES FROM EXCEL
-// ======================================================
+/* =========================================================
+   HELPERS
+========================================================= */
+
+function normalizeMonth(month) {
+  if (!month) {
+    return null;
+  }
+
+  const value =
+    String(month).trim();
+
+  if (/^\d{4}-\d{2}$/.test(value)) {
+    return value;
+  }
+
+  if (
+    /^\d{4}-\d{2}-\d{2}$/.test(value)
+  ) {
+    return value.slice(0, 7);
+  }
+
+  return null;
+}
+
+function monthToDate(month) {
+  const normalizedMonth =
+    normalizeMonth(month);
+
+  if (!normalizedMonth) {
+    return null;
+  }
+
+  return `${normalizedMonth}-01`;
+}
+
+function toNumber(value) {
+  if (
+    value === null ||
+    value === undefined ||
+    value === ""
+  ) {
+    return 0;
+  }
+
+  const number =
+    Number(
+      String(value)
+        .replace("$", "")
+        .replace(",", "")
+        .trim()
+    );
+
+  return Number.isFinite(number)
+    ? number
+    : 0;
+}
+
+function round2(value) {
+  return Number(
+    Number(value || 0).toFixed(2)
+  );
+}
+
+/* =========================================================
+   FETCH EMPLOYEES FROM EXCEL
+========================================================= */
 
 async function fetchEmployeesFromExcel() {
   const now = Date.now();
 
-  // Return cached data
   if (
     employeesCache &&
     now - employeesCacheTime <
@@ -117,19 +204,19 @@ async function fetchEmployeesFromExcel() {
 
   if (!userEmail) {
     throw new Error(
-      "USER_EMAIL missing in .env"
+      "USER_EMAIL missing in environment variables"
     );
   }
 
   if (!fileId) {
     throw new Error(
-      "FILE_ID missing in .env"
+      "FILE_ID missing in environment variables"
     );
   }
 
   if (!sheetName) {
     throw new Error(
-      "EXCEL_SHEET_NAME missing in .env"
+      "EXCEL_SHEET_NAME missing in environment variables"
     );
   }
 
@@ -148,11 +235,9 @@ async function fetchEmployeesFromExcel() {
   const response =
     await fetch(graphUrl, {
       method: "GET",
-
       headers: {
         Authorization:
           `Bearer ${accessToken}`,
-
         Accept:
           "application/json",
       },
@@ -163,7 +248,7 @@ async function fetchEmployeesFromExcel() {
 
   if (!response.ok) {
     console.error(
-      "Graph Error:",
+      "Microsoft Graph Error:",
       result
     );
 
@@ -176,10 +261,12 @@ async function fetchEmployeesFromExcel() {
   const values =
     result.values || [];
 
-  if (values.length === 0) {
-    employeesCache = [];
+  if (!Array.isArray(values) ||
+      values.length === 0) {
 
-    employeesCacheTime = Date.now();
+    employeesCache = [];
+    employeesCacheTime =
+      Date.now();
 
     return [];
   }
@@ -209,50 +296,54 @@ async function fetchEmployeesFromExcel() {
             }
           );
 
+          /*
+             Keep the Excel row based ID
+          */
+
           employee.id =
             index + 1;
 
+          /*
+             Name
+          */
+
           employee.name =
-            employee[
-              "Full Name"
-            ] ||
-            employee[
-              "Name"
-            ] ||
-            employee[
-              "Employee Name"
-            ] ||
+            employee["Full Name"] ||
+            employee["Name"] ||
+            employee["Employee Name"] ||
             "";
+
+          /*
+             Branch
+          */
 
           employee.branch =
-            employee[
-              "Location"
-            ] ||
-            employee[
-              "Branch"
-            ] ||
+            employee["Location"] ||
+            employee["Branch"] ||
             "";
+
+          /*
+             Email
+          */
 
           employee.email =
-            employee[
-              "E-mail ID"
-            ] ||
-            employee[
-              "Email"
-            ] ||
-            employee[
-              "Email ID"
-            ] ||
+            employee["E-mail ID"] ||
+            employee["Email"] ||
+            employee["Email ID"] ||
             "";
 
+          /*
+             Phone
+          */
+
           employee.phone =
-            employee[
-              "Phone Number"
-            ] ||
-            employee[
-              "Phone"
-            ] ||
+            employee["Phone Number"] ||
+            employee["Phone"] ||
             "";
+
+          /*
+             Monthly Salary
+          */
 
           const salary =
             employee[
@@ -264,12 +355,7 @@ async function fetchEmployeesFromExcel() {
             0;
 
           employee.monthly_salary =
-            Number(
-              String(salary)
-                .replace("$", "")
-                .replace(",", "")
-                .trim()
-            ) || 0;
+            toNumber(salary);
 
           return employee;
         }
@@ -281,7 +367,6 @@ async function fetchEmployeesFromExcel() {
           ).trim() !== ""
       );
 
-  // Save cache
   employeesCache =
     employees;
 
@@ -291,25 +376,65 @@ async function fetchEmployeesFromExcel() {
   return employees;
 }
 
-// ======================================================
-// HOME
-// ======================================================
+/* =========================================================
+   HOME
+========================================================= */
 
 app.get(
   "/",
   (req, res) => {
     res.json({
       success: true,
-
       message:
         "Bharat Bhavan Salary API is running",
     });
   }
 );
 
-// ======================================================
-// GET EMPLOYEES
-// ======================================================
+/* =========================================================
+   HEALTH CHECK
+========================================================= */
+
+app.get(
+  "/health",
+  async (req, res) => {
+    try {
+      const {
+        error,
+      } = await supabase
+        .from("monthly_salaries")
+        .select("employee_id")
+        .limit(1);
+
+      if (error) {
+        return res.status(500).json({
+          success: false,
+          supabase: false,
+          message:
+            error.message,
+        });
+      }
+
+      return res.json({
+        success: true,
+        supabase: true,
+        message:
+          "API and Supabase are working",
+      });
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        supabase: false,
+        message:
+          error.message,
+      });
+    }
+  }
+);
+
+/* =========================================================
+   GET EMPLOYEES
+========================================================= */
 
 app.get(
   "/api/employees",
@@ -320,13 +445,10 @@ app.get(
 
       return res.json({
         success: true,
-
         source:
           "Microsoft Excel",
-
         count:
           employees.length,
-
         data:
           employees,
       });
@@ -338,7 +460,6 @@ app.get(
 
       return res.status(500).json({
         success: false,
-
         message:
           error.message,
       });
@@ -346,9 +467,9 @@ app.get(
   }
 );
 
-// ======================================================
-// EMPLOYEE SUMMARY
-// ======================================================
+/* =========================================================
+   EMPLOYEE SUMMARY
+========================================================= */
 
 app.get(
   "/api/employees/summary",
@@ -373,31 +494,22 @@ app.get(
               .toLowerCase();
 
           const salary =
-            Number(
-              employee.monthly_salary ||
-                0
+            toNumber(
+              employee.monthly_salary
             );
 
           if (
-            branch.includes(
-              "frisco"
-            )
+            branch.includes("frisco")
           ) {
             friscoCount++;
-
-            friscoSalary +=
-              salary;
+            friscoSalary += salary;
           }
 
           if (
-            branch.includes(
-              "irving"
-            )
+            branch.includes("irving")
           ) {
             irvingCount++;
-
-            irvingSalary +=
-              salary;
+            irvingSalary += salary;
           }
         }
       );
@@ -408,37 +520,24 @@ app.get(
         frisco: {
           employees:
             friscoCount,
-
           salary:
-            Number(
-              friscoSalary.toFixed(
-                2
-              )
-            ),
+            round2(friscoSalary),
         },
 
         irving: {
           employees:
             irvingCount,
-
           salary:
-            Number(
-              irvingSalary.toFixed(
-                2
-              )
-            ),
+            round2(irvingSalary),
         },
 
         total: {
           employees:
             employees.length,
-
           salary:
-            Number(
-              (
-                friscoSalary +
-                irvingSalary
-              ).toFixed(2)
+            round2(
+              friscoSalary +
+              irvingSalary
             ),
         },
       });
@@ -450,7 +549,6 @@ app.get(
 
       return res.status(500).json({
         success: false,
-
         message:
           error.message,
       });
@@ -458,28 +556,29 @@ app.get(
   }
 );
 
-// ======================================================
-// GET ALL MONTHLY SALARIES
-// ======================================================
+/* =========================================================
+   GET ALL MONTHLY SALARIES
+========================================================= */
 
 app.get(
   "/salary/monthly",
   async (req, res) => {
     try {
       const month =
-        req.query.month;
+        normalizeMonth(
+          req.query.month
+        );
 
       if (!month) {
         return res.status(400).json({
           success: false,
-
           message:
-            "Month is required. Example: 2026-08",
+            "Valid month is required. Example: 2026-08",
         });
       }
 
       const salaryMonthDate =
-        `${month}-01`;
+        monthToDate(month);
 
       const {
         data,
@@ -501,7 +600,6 @@ app.get(
       if (error) {
         return res.status(500).json({
           success: false,
-
           message:
             error.message,
         });
@@ -509,17 +607,19 @@ app.get(
 
       return res.json({
         success: true,
-
         salary_month:
           month,
-
         salaries:
           data || [],
       });
     } catch (error) {
+      console.error(
+        "Monthly salaries error:",
+        error
+      );
+
       return res.status(500).json({
         success: false,
-
         message:
           error.message,
       });
@@ -527,9 +627,9 @@ app.get(
   }
 );
 
-// ======================================================
-// GET MONTHLY SALARY + PAYMENTS
-// ======================================================
+/* =========================================================
+   GET MONTHLY SALARY + PAYMENTS
+========================================================= */
 
 app.get(
   "/salary/monthly/:employeeId/:month",
@@ -541,30 +641,37 @@ app.get(
         );
 
       const month =
-        req.params.month;
+        normalizeMonth(
+          req.params.month
+        );
 
-      if (!employeeId) {
+      if (
+        !employeeId ||
+        !Number.isFinite(employeeId)
+      ) {
         return res.status(400).json({
           success: false,
-
           message:
-            "Employee ID is required",
+            "Valid employee ID is required",
         });
       }
 
       if (!month) {
         return res.status(400).json({
           success: false,
-
           message:
-            "Salary month is required",
+            "Valid salary month is required",
         });
       }
 
       const salaryMonthDate =
-        `${month}-01`;
+        monthToDate(month);
 
-      // Salary + payments in parallel
+      /*
+         Salary and payments are fetched
+         simultaneously.
+      */
+
       const [
         salaryResult,
         paymentResult,
@@ -600,8 +707,7 @@ app.get(
           .order(
             "payment_date",
             {
-              ascending:
-                false,
+              ascending: false,
             }
           ),
       ]);
@@ -619,7 +725,6 @@ app.get(
       if (salaryError) {
         return res.status(500).json({
           success: false,
-
           message:
             salaryError.message,
         });
@@ -628,7 +733,6 @@ app.get(
       if (paymentError) {
         return res.status(500).json({
           success: false,
-
           message:
             paymentError.message,
         });
@@ -641,64 +745,57 @@ app.get(
             payment
           ) =>
             total +
-            Number(
-              payment.amount ||
-                0
+            toNumber(
+              payment.amount
             ),
           0
         );
 
+      /*
+         No monthly salary saved yet
+      */
+
       if (!salaryData) {
         return res.json({
           success: true,
-
           salary: null,
-
           payments:
             payments || [],
-
           total_paid:
-            Number(
-              totalPaid.toFixed(
-                2
-              )
-            ),
-
+            round2(totalPaid),
           earned_salary: 0,
-
           remaining: 0,
         });
       }
 
       const monthlySalary =
-        Number(
-          salaryData.monthly_salary ||
-            0
+        toNumber(
+          salaryData.monthly_salary
         );
 
       const workingDays =
-        Number(
-          salaryData.working_days ||
-            0
+        toNumber(
+          salaryData.working_days
         );
 
       const hoursPerDay =
-        Number(
-          salaryData.hours_per_day ||
-            0
+        toNumber(
+          salaryData.hours_per_day
         );
 
       const workedHours =
-        Number(
-          salaryData.worked_hours ||
-            0
+        toNumber(
+          salaryData.worked_hours
         );
 
       let earnedSalary =
-        Number(
-          salaryData.earned_salary ||
-            0
+        toNumber(
+          salaryData.earned_salary
         );
+
+      /*
+         Recalculate earned salary
+      */
 
       if (
         monthlySalary > 0 &&
@@ -717,10 +814,8 @@ app.get(
       }
 
       earnedSalary =
-        Number(
-          earnedSalary.toFixed(
-            2
-          )
+        round2(
+          earnedSalary
         );
 
       const remaining =
@@ -735,7 +830,6 @@ app.get(
 
         salary: {
           ...salaryData,
-
           earned_salary:
             earnedSalary,
         },
@@ -744,21 +838,13 @@ app.get(
           payments || [],
 
         total_paid:
-          Number(
-            totalPaid.toFixed(
-              2
-            )
-          ),
+          round2(totalPaid),
 
         earned_salary:
           earnedSalary,
 
         remaining:
-          Number(
-            remaining.toFixed(
-              2
-            )
-          ),
+          round2(remaining),
       });
     } catch (error) {
       console.error(
@@ -768,7 +854,6 @@ app.get(
 
       return res.status(500).json({
         success: false,
-
         message:
           error.message,
       });
@@ -776,9 +861,9 @@ app.get(
   }
 );
 
-// ======================================================
-// SAVE MONTHLY SALARY
-// ======================================================
+/* =========================================================
+   SAVE MONTHLY SALARY
+========================================================= */
 
 app.post(
   "/salary/monthly",
@@ -797,44 +882,47 @@ app.post(
       if (!employee_id) {
         return res.status(400).json({
           success: false,
-
           message:
             "Employee ID is required",
         });
       }
 
-      if (!salary_month) {
+      const month =
+        normalizeMonth(
+          salary_month
+        );
+
+      if (!month) {
         return res.status(400).json({
           success: false,
-
           message:
-            "Salary month is required",
+            "Valid salary month is required. Example: 2026-08",
         });
       }
 
       const salary =
-        Number(
-          monthly_salary || 0
+        toNumber(
+          monthly_salary
         );
 
       const days =
-        Number(
-          working_days || 0
+        toNumber(
+          working_days
         );
 
       const hours =
-        Number(
-          hours_per_day || 0
+        toNumber(
+          hours_per_day
         );
 
       const daysWorked =
-        Number(
-          worked_days || 0
+        toNumber(
+          worked_days
         );
 
       let workedHours =
-        Number(
-          worked_hours || 0
+        toNumber(
+          worked_hours
         );
 
       if (
@@ -862,10 +950,8 @@ app.post(
       }
 
       earnedSalary =
-        Number(
-          earnedSalary.toFixed(
-            2
-          )
+        round2(
+          earnedSalary
         );
 
       const salaryData = {
@@ -873,7 +959,7 @@ app.post(
           Number(employee_id),
 
         salary_month:
-          `${salary_month}-01`,
+          monthToDate(month),
 
         monthly_salary:
           salary,
@@ -916,9 +1002,13 @@ app.post(
           .single();
 
       if (error) {
+        console.error(
+          "Save salary error:",
+          error
+        );
+
         return res.status(500).json({
           success: false,
-
           message:
             error.message,
         });
@@ -926,17 +1016,19 @@ app.post(
 
       return res.status(201).json({
         success: true,
-
         message:
           "Monthly salary saved successfully",
-
         salary:
           data,
       });
     } catch (error) {
+      console.error(
+        "Save monthly salary error:",
+        error
+      );
+
       return res.status(500).json({
         success: false,
-
         message:
           error.message,
       });
@@ -944,9 +1036,9 @@ app.post(
   }
 );
 
-// ======================================================
-// UPDATE MONTHLY SALARY
-// ======================================================
+/* =========================================================
+   UPDATE MONTHLY SALARY
+========================================================= */
 
 app.put(
   "/salary/monthly/:employeeId/:month",
@@ -958,7 +1050,28 @@ app.put(
         );
 
       const month =
-        req.params.month;
+        normalizeMonth(
+          req.params.month
+        );
+
+      if (
+        !employeeId ||
+        !Number.isFinite(employeeId)
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Valid employee ID is required",
+        });
+      }
+
+      if (!month) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Valid salary month is required",
+        });
+      }
 
       const {
         monthly_salary,
@@ -969,28 +1082,28 @@ app.put(
       } = req.body;
 
       const salary =
-        Number(
-          monthly_salary || 0
+        toNumber(
+          monthly_salary
         );
 
       const days =
-        Number(
-          working_days || 0
+        toNumber(
+          working_days
         );
 
       const hours =
-        Number(
-          hours_per_day || 0
+        toNumber(
+          hours_per_day
         );
 
       const daysWorked =
-        Number(
-          worked_days || 0
+        toNumber(
+          worked_days
         );
 
       let workedHours =
-        Number(
-          worked_hours || 0
+        toNumber(
+          worked_hours
         );
 
       if (
@@ -1018,10 +1131,8 @@ app.put(
       }
 
       earnedSalary =
-        Number(
-          earnedSalary.toFixed(
-            2
-          )
+        round2(
+          earnedSalary
         );
 
       const {
@@ -1060,7 +1171,7 @@ app.put(
           )
           .eq(
             "salary_month",
-            `${month}-01`
+            monthToDate(month)
           )
           .select()
           .single();
@@ -1068,7 +1179,6 @@ app.put(
       if (error) {
         return res.status(500).json({
           success: false,
-
           message:
             error.message,
         });
@@ -1076,17 +1186,19 @@ app.put(
 
       return res.json({
         success: true,
-
         message:
           "Monthly salary updated successfully",
-
         salary:
           data,
       });
     } catch (error) {
+      console.error(
+        "Update monthly salary error:",
+        error
+      );
+
       return res.status(500).json({
         success: false,
-
         message:
           error.message,
       });
@@ -1094,9 +1206,9 @@ app.put(
   }
 );
 
-// ======================================================
-// ADD PAYMENT
-// ======================================================
+/* =========================================================
+   ADD PAYMENT
+========================================================= */
 
 app.post(
   "/salary/payments",
@@ -1110,22 +1222,26 @@ app.post(
         notes,
       } = req.body;
 
-      if (!employee_id) {
-        return res.status(400).json({
-          success: false,
+      const employeeId =
+        Number(employee_id);
 
-          message:
-            "Employee ID is required",
-        });
-      }
+      const newAmount =
+        toNumber(amount);
 
       if (
-        !amount ||
-        Number(amount) <= 0
+        !employeeId ||
+        !Number.isFinite(employeeId)
       ) {
         return res.status(400).json({
           success: false,
+          message:
+            "Valid employee ID is required",
+        });
+      }
 
+      if (newAmount <= 0) {
+        return res.status(400).json({
+          success: false,
           message:
             "Valid payment amount is required",
         });
@@ -1134,17 +1250,31 @@ app.post(
       if (!payment_date) {
         return res.status(400).json({
           success: false,
-
           message:
             "Payment date is required",
         });
       }
 
       const finalSalaryMonth =
-        salary_month ||
+        normalizeMonth(
+          salary_month
+        ) ||
         String(
           payment_date
         ).slice(0, 7);
+
+      if (!finalSalaryMonth) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Valid salary month is required",
+        });
+      }
+
+      /*
+         Get salary and existing payments
+         together.
+      */
 
       const [
         salaryResult,
@@ -1159,11 +1289,13 @@ app.post(
           )
           .eq(
             "employee_id",
-            Number(employee_id)
+            employeeId
           )
           .eq(
             "salary_month",
-            `${finalSalaryMonth}-01`
+            monthToDate(
+              finalSalaryMonth
+            )
           )
           .maybeSingle(),
 
@@ -1174,7 +1306,7 @@ app.post(
           .select("amount")
           .eq(
             "employee_id",
-            Number(employee_id)
+            employeeId
           )
           .eq(
             "salary_month",
@@ -1187,10 +1319,8 @@ app.post(
       ) {
         return res.status(500).json({
           success: false,
-
           message:
-            salaryResult.error
-              .message,
+            salaryResult.error.message,
         });
       }
 
@@ -1199,20 +1329,24 @@ app.post(
       ) {
         return res.status(500).json({
           success: false,
-
           message:
-            paymentsResult.error
-              .message,
+            paymentsResult.error.message,
         });
       }
 
+      /*
+         Prefer earned salary.
+         If not available, use monthly salary.
+      */
+
       const salaryLimit =
-        Number(
+        toNumber(
           salaryResult.data
-            ?.earned_salary ||
-            salaryResult.data
-              ?.monthly_salary ||
-            0
+            ?.earned_salary
+        ) ||
+        toNumber(
+          salaryResult.data
+            ?.monthly_salary
         );
 
       const alreadyPaid =
@@ -1225,31 +1359,34 @@ app.post(
             payment
           ) =>
             total +
-            Number(
-              payment.amount ||
-                0
+            toNumber(
+              payment.amount
             ),
           0
         );
 
-      const newAmount =
-        Number(amount);
+      const remaining =
+        Math.max(
+          salaryLimit -
+            alreadyPaid,
+          0
+        );
+
+      /*
+         Do not allow payment greater
+         than remaining salary.
+      */
 
       if (
         salaryLimit > 0 &&
-        alreadyPaid +
-          newAmount >
-          salaryLimit
+        newAmount > remaining
       ) {
         return res.status(400).json({
           success: false,
-
           message:
-            `Payment exceeds remaining salary. Remaining: $${Math.max(
-              salaryLimit -
-                alreadyPaid,
-              0
-            ).toFixed(2)}`,
+            `Payment exceeds remaining salary. Remaining: $${remaining.toFixed(
+              2
+            )}`,
         });
       }
 
@@ -1263,7 +1400,7 @@ app.post(
           )
           .insert({
             employee_id:
-              Number(employee_id),
+              employeeId,
 
             amount:
               newAmount,
@@ -1282,7 +1419,6 @@ app.post(
       if (error) {
         return res.status(500).json({
           success: false,
-
           message:
             error.message,
         });
@@ -1290,17 +1426,19 @@ app.post(
 
       return res.status(201).json({
         success: true,
-
         message:
           "Payment recorded successfully",
-
         payment:
           data,
       });
     } catch (error) {
+      console.error(
+        "Add payment error:",
+        error
+      );
+
       return res.status(500).json({
         success: false,
-
         message:
           error.message,
       });
@@ -1308,9 +1446,9 @@ app.post(
   }
 );
 
-// ======================================================
-// GET PAYMENTS
-// ======================================================
+/* =========================================================
+   GET PAYMENTS FOR EMPLOYEE
+========================================================= */
 
 app.get(
   "/salary/payments/:employeeId",
@@ -1320,6 +1458,17 @@ app.get(
         Number(
           req.params.employeeId
         );
+
+      if (
+        !employeeId ||
+        !Number.isFinite(employeeId)
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Valid employee ID is required",
+        });
+      }
 
       const {
         data,
@@ -1337,15 +1486,13 @@ app.get(
           .order(
             "payment_date",
             {
-              ascending:
-                false,
+              ascending: false,
             }
           );
 
       if (error) {
         return res.status(500).json({
           success: false,
-
           message:
             error.message,
         });
@@ -1353,17 +1500,19 @@ app.get(
 
       return res.json({
         success: true,
-
         employee_id:
           employeeId,
-
         payments:
           data || [],
       });
     } catch (error) {
+      console.error(
+        "Get payments error:",
+        error
+      );
+
       return res.status(500).json({
         success: false,
-
         message:
           error.message,
       });
@@ -1371,9 +1520,9 @@ app.get(
   }
 );
 
-// ======================================================
-// UPDATE PAYMENT
-// ======================================================
+/* =========================================================
+   UPDATE PAYMENT
+========================================================= */
 
 app.put(
   "/salary/payments/:paymentId",
@@ -1388,6 +1537,25 @@ app.put(
         salary_month,
         notes,
       } = req.body;
+
+      const newAmount =
+        toNumber(amount);
+
+      if (newAmount <= 0) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Valid payment amount is required",
+        });
+      }
+
+      if (!payment_date) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Payment date is required",
+        });
+      }
 
       const {
         data: existingPayment,
@@ -1404,17 +1572,42 @@ app.put(
           )
           .single();
 
-      if (existingError) {
+      if (
+        existingError ||
+        !existingPayment
+      ) {
         return res.status(404).json({
           success: false,
-
           message:
             "Payment not found",
         });
       }
 
       const employeeId =
-        existingPayment.employee_id;
+        Number(
+          existingPayment.employee_id
+        );
+
+      /*
+         If salary_month isn't supplied,
+         use the existing payment month.
+      */
+
+      const finalSalaryMonth =
+        normalizeMonth(
+          salary_month
+        ) ||
+        normalizeMonth(
+          existingPayment.salary_month
+        );
+
+      if (!finalSalaryMonth) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Valid salary month is required",
+        });
+      }
 
       const {
         data: salaryData,
@@ -1433,25 +1626,31 @@ app.put(
           )
           .eq(
             "salary_month",
-            `${salary_month}-01`
+            monthToDate(
+              finalSalaryMonth
+            )
           )
           .maybeSingle();
 
       if (salaryError) {
         return res.status(500).json({
           success: false,
-
           message:
             salaryError.message,
         });
       }
 
       const salaryLimit =
-        Number(
-          salaryData?.earned_salary ||
-            salaryData?.monthly_salary ||
-            0
+        toNumber(
+          salaryData?.earned_salary
+        ) ||
+        toNumber(
+          salaryData?.monthly_salary
         );
+
+      /*
+         Get all OTHER payments.
+      */
 
       const {
         data: otherPayments,
@@ -1470,7 +1669,7 @@ app.put(
           )
           .eq(
             "salary_month",
-            salary_month
+            finalSalaryMonth
           )
           .neq(
             "id",
@@ -1480,7 +1679,6 @@ app.put(
       if (paymentsError) {
         return res.status(500).json({
           success: false,
-
           message:
             paymentsError.message,
         });
@@ -1496,30 +1694,30 @@ app.put(
             payment
           ) =>
             total +
-            Number(
-              payment.amount ||
-                0
+            toNumber(
+              payment.amount
             ),
           0
         );
 
-      const newAmount =
-        Number(amount);
+      const remainingForPayment =
+        Math.max(
+          salaryLimit -
+            totalOther,
+          0
+        );
 
       if (
         salaryLimit > 0 &&
         newAmount >
-          Math.max(
-            salaryLimit -
-              totalOther,
-            0
-          )
+          remainingForPayment
       ) {
         return res.status(400).json({
           success: false,
-
           message:
-            "Payment is greater than remaining salary",
+            `Payment is greater than remaining salary. Maximum allowed: $${remainingForPayment.toFixed(
+              2
+            )}`,
         });
       }
 
@@ -1537,7 +1735,8 @@ app.put(
 
             payment_date,
 
-            salary_month,
+            salary_month:
+              finalSalaryMonth,
 
             notes:
               notes || null,
@@ -1552,7 +1751,6 @@ app.put(
       if (error) {
         return res.status(500).json({
           success: false,
-
           message:
             error.message,
         });
@@ -1560,17 +1758,19 @@ app.put(
 
       return res.json({
         success: true,
-
         message:
           "Payment updated successfully",
-
         payment:
           data,
       });
     } catch (error) {
+      console.error(
+        "Update payment error:",
+        error
+      );
+
       return res.status(500).json({
         success: false,
-
         message:
           error.message,
       });
@@ -1578,9 +1778,9 @@ app.put(
   }
 );
 
-// ======================================================
-// DELETE PAYMENT
-// ======================================================
+/* =========================================================
+   DELETE PAYMENT
+========================================================= */
 
 app.delete(
   "/salary/payments/:paymentId",
@@ -1604,10 +1804,12 @@ app.delete(
           )
           .single();
 
-      if (findError) {
+      if (
+        findError ||
+        !payment
+      ) {
         return res.status(404).json({
           success: false,
-
           message:
             "Payment not found",
         });
@@ -1629,7 +1831,6 @@ app.delete(
       if (error) {
         return res.status(500).json({
           success: false,
-
           message:
             error.message,
         });
@@ -1637,17 +1838,19 @@ app.delete(
 
       return res.json({
         success: true,
-
         message:
           "Payment deleted successfully",
-
         deletedPayment:
           payment,
       });
     } catch (error) {
+      console.error(
+        "Delete payment error:",
+        error
+      );
+
       return res.status(500).json({
         success: false,
-
         message:
           error.message,
       });
@@ -1655,9 +1858,50 @@ app.delete(
   }
 );
 
-// ======================================================
-// SERVER
-// ======================================================
+/* =========================================================
+   404 HANDLER
+========================================================= */
+
+app.use(
+  (req, res) => {
+    res.status(404).json({
+      success: false,
+      message:
+        "API endpoint not found",
+      path:
+        req.originalUrl,
+    });
+  }
+);
+
+/* =========================================================
+   GLOBAL ERROR HANDLER
+========================================================= */
+
+app.use(
+  (
+    error,
+    req,
+    res,
+    next
+  ) => {
+    console.error(
+      "Unhandled server error:",
+      error
+    );
+
+    res.status(500).json({
+      success: false,
+      message:
+        error.message ||
+        "Internal server error",
+    });
+  }
+);
+
+/* =========================================================
+   SERVER
+========================================================= */
 
 const PORT =
   process.env.PORT || 5000;
@@ -1666,7 +1910,19 @@ app.listen(
   PORT,
   () => {
     console.log(
-      `Server running on port ${PORT}`
+      "======================================"
+    );
+
+    console.log(
+      `Bharat Bhavan Salary API running on port ${PORT}`
+    );
+
+    console.log(
+      `http://localhost:${PORT}`
+    );
+
+    console.log(
+      "======================================"
     );
   }
 );
